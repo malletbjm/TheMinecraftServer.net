@@ -261,7 +261,13 @@ function Ensure-ModsSource {
             throw "No published release found with name containing '$minecraftVersion'."
         }
 
-        $selectedRelease = $matchingReleases | Sort-Object { $_.published_at } -Descending | Select-Object -First 1
+        $modsNamedReleases = @($matchingReleases | Where-Object { $_.name -like "mods-$minecraftVersion*" })
+        if ($modsNamedReleases -and $modsNamedReleases.Count -gt 0) {
+            $selectedRelease = $modsNamedReleases | Sort-Object { $_.published_at } -Descending | Select-Object -First 1
+        }
+        else {
+            $selectedRelease = $matchingReleases | Sort-Object { $_.published_at } -Descending | Select-Object -First 1
+        }
         if (-not $selectedRelease.assets) {
             throw "No assets found for release '$($selectedRelease.name)'."
         }
@@ -286,7 +292,43 @@ function Ensure-ModsSource {
     }
 
     if (-not $filteredAssets -or $filteredAssets.Count -eq 0) {
-        throw "No matching mods assets found in release '$modsReleaseTag'."
+        if ($matchingReleases) {
+            $sortedMatching = $matchingReleases | Sort-Object { $_.published_at } -Descending
+            $orderedCandidates = @()
+            if ($modsNamedReleases -and $modsNamedReleases.Count -gt 0) {
+                $orderedCandidates += ($modsNamedReleases | Sort-Object { $_.published_at } -Descending)
+            }
+            $orderedCandidates += ($sortedMatching | Where-Object { $modsNamedReleases -notcontains $_ })
+
+            foreach ($candidate in $orderedCandidates) {
+                if (-not $candidate.assets) {
+                    continue
+                }
+                $candidateAssets = @($candidate.assets)
+                $candidateFiltered = $candidateAssets | Where-Object {
+                    $name = $_.name
+                    foreach ($ext in $extensions) {
+                        if ($name.EndsWith($ext, [StringComparison]::OrdinalIgnoreCase)) {
+                            return $true
+                        }
+                    }
+                    return $false
+                }
+                if ($candidateFiltered -and $candidateFiltered.Count -gt 0) {
+                    $selectedRelease = $candidate
+                    $filteredAssets = $candidateFiltered
+                    break
+                }
+            }
+        }
+    }
+
+    if (-not $filteredAssets -or $filteredAssets.Count -eq 0) {
+        $extSummary = $modsAssetExtensions
+        if ([string]::IsNullOrWhiteSpace($extSummary)) {
+            $extSummary = ".jar"
+        }
+        throw "No matching mods assets found for Minecraft $minecraftVersion in repo '$modsReleaseRepo' (extensions: $extSummary)."
     }
 
     $downloads = @()
@@ -675,6 +717,7 @@ public struct RECT {
 }
 
 $banner = @'
+ _____                                                                                                        _____
  ( ___ )                                                                                                      ( ___ )
  |   |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|   | 
  |   |                    *                                     (                                             |   | 
