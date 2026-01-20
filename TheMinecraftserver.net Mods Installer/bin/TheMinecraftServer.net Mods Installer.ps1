@@ -732,8 +732,294 @@ $banner = @'
  (_____)                                                                                                      (_____)
 '@
 $bannerLines = $banner -split "`r?`n"
-$banner = ($bannerLines | ForEach-Object { $_.TrimEnd() }) -join "`n"
+$bannerLines = $bannerLines | ForEach-Object { $_.TrimEnd() }
+$banner = $bannerLines -join "`n"
 $script:bannerText = $banner
+$script:bannerLogoLineIndexes = 5..10
+$script:bannerFireLineIndexes = 3..7
+$script:bannerAccentLines = @{
+    8 = @(
+        "(_|_))",
+        "_(_/((_)) ((_|(_|(_)(_",
+        "(_))  ((_))((_|_))  ((_) _(_/((_))"
+    )
+}
+
+function Convert-ToConsoleColor {
+    param(
+        $val,
+        [ConsoleColor]$default
+    )
+
+    if ($val -is [System.ConsoleColor]) { return $val }
+    $s = [string]$val
+    if ($s -match '::') { $s = $s.Split('::')[-1] }
+    $s = $s.Trim('[',']','"',"'",' ')
+    try {
+        return [System.Enum]::Parse([System.ConsoleColor], $s)
+    } catch {
+        return $default
+    }
+}
+
+function Write-CenteredColoredLine {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string[]]$Segments,
+        [Parameter(Mandatory=$true)]
+        $ForegroundColors,
+        [ConsoleColor]$BackgroundColor = [ConsoleColor]::Black
+    )
+
+    if ($Segments.Count -ne $ForegroundColors.Count) {
+        $line = $Segments -join ''
+        Write-Host $line -ForegroundColor DarkRed
+        return
+    }
+
+    $line = $Segments -join ''
+    $width = Get-ConsoleWidth
+    $len = ($line -replace "`r","").Length
+    $pad = if ($len -ge $width -or $width -le 0) { 0 } else { [int]([Math]::Floor(($width - $len) / 2)) }
+    $spaces = ' ' * $pad
+    $bgColor = Convert-ToConsoleColor $BackgroundColor ([ConsoleColor]::Black)
+
+    try {
+        $origFg = [Console]::ForegroundColor
+        $origBg = [Console]::BackgroundColor
+
+        if ($spaces) {
+            $firstColor = Convert-ToConsoleColor $ForegroundColors[0] ([ConsoleColor]::DarkRed)
+            [Console]::ForegroundColor = $firstColor
+            [Console]::BackgroundColor = $bgColor
+            [Console]::Write($spaces)
+        }
+
+        for ($i = 0; $i -lt $Segments.Count; $i++) {
+            $fgColor = Convert-ToConsoleColor $ForegroundColors[$i] ([ConsoleColor]::DarkRed)
+            [Console]::ForegroundColor = $fgColor
+            [Console]::BackgroundColor = $bgColor
+            [Console]::Write($Segments[$i])
+        }
+
+        [Console]::WriteLine()
+    }
+    catch {
+        Write-Host $line -ForegroundColor DarkRed
+    }
+    finally {
+        try {
+            if ($null -ne $origFg) { [Console]::ForegroundColor = $origFg }
+            if ($null -ne $origBg) { [Console]::BackgroundColor = $origBg }
+        } catch {}
+    }
+}
+
+function Write-CenteredFireLine {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Line,
+        [int]$RelativeIndex = 0
+    )
+
+    $framePattern = '^(?<prefix>\s*\|\s{3}\|\s)(?<inner>.*?)(?<suffix>\s\|\s{3}\|)$'
+    if (-not ($Line -match $framePattern)) {
+        Write-Host $Line -ForegroundColor DarkRed
+        return
+    }
+
+    $prefix = $Matches['prefix']
+    $inner = $Matches['inner']
+    $suffix = $Matches['suffix']
+
+    $width = Get-ConsoleWidth
+    $len = ($Line -replace "`r","").Length
+    $pad = if ($len -ge $width -or $width -le 0) { 0 } else { [int]([Math]::Floor(($width - $len) / 2)) }
+    $spaces = ' ' * $pad
+
+    $baseColor = [ConsoleColor]::DarkRed
+    if ($RelativeIndex -le 2) { $baseColor = [ConsoleColor]::Yellow }
+    elseif ($RelativeIndex -le 5) { $baseColor = [ConsoleColor]::Red }
+
+    try {
+        $origFg = [Console]::ForegroundColor
+        $origBg = [Console]::BackgroundColor
+
+        if ($spaces) {
+            [Console]::ForegroundColor = [ConsoleColor]::DarkRed
+            [Console]::BackgroundColor = [ConsoleColor]::Black
+            [Console]::Write($spaces)
+        }
+
+        [Console]::ForegroundColor = [ConsoleColor]::DarkRed
+        [Console]::BackgroundColor = [ConsoleColor]::Black
+        [Console]::Write($prefix)
+
+        foreach ($ch in $inner.ToCharArray()) {
+            if ($ch -eq ' ') {
+                [Console]::ForegroundColor = [ConsoleColor]::DarkRed
+            }
+            else {
+                [Console]::ForegroundColor = $baseColor
+            }
+            [Console]::BackgroundColor = [ConsoleColor]::Black
+            [Console]::Write($ch)
+        }
+
+        [Console]::ForegroundColor = [ConsoleColor]::DarkRed
+        [Console]::BackgroundColor = [ConsoleColor]::Black
+        [Console]::Write($suffix)
+        [Console]::WriteLine()
+    }
+    catch {
+        Write-Host $Line -ForegroundColor DarkRed
+    }
+    finally {
+        try {
+            if ($null -ne $origFg) { [Console]::ForegroundColor = $origFg }
+            if ($null -ne $origBg) { [Console]::BackgroundColor = $origBg }
+        } catch {}
+    }
+}
+
+function Write-CenteredAccentLine {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Line,
+        [Parameter(Mandatory=$true)]
+        [string[]]$AccentStrings,
+        [ConsoleColor]$DefaultColor = [ConsoleColor]::White,
+        [ConsoleColor]$AccentColor = [ConsoleColor]::Red
+    )
+
+    $framePattern = '^(?<prefix>\s*\|\s{3}\|\s)(?<inner>.*?)(?<suffix>\s\|\s{3}\|)$'
+    if (-not ($Line -match $framePattern)) {
+        Write-Host $Line -ForegroundColor $DefaultColor
+        return
+    }
+
+    $prefix = $Matches['prefix']
+    $inner = $Matches['inner']
+    $suffix = $Matches['suffix']
+
+    $ranges = @()
+    foreach ($needle in $AccentStrings) {
+        if ([string]::IsNullOrWhiteSpace($needle)) { continue }
+        $idx = $inner.IndexOf($needle, [StringComparison]::Ordinal)
+        if ($idx -ge 0) {
+            $ranges += [pscustomobject]@{ Start = $idx; End = $idx + $needle.Length - 1 }
+        }
+    }
+
+    if (-not $ranges -or $ranges.Count -eq 0) {
+        Write-Host $Line -ForegroundColor $DefaultColor
+        return
+    }
+
+    $ranges = $ranges | Sort-Object Start
+    $merged = @()
+    foreach ($r in $ranges) {
+        if (-not $merged) {
+            $merged += $r
+            continue
+        }
+        $last = $merged[-1]
+        if ($r.Start -le ($last.End + 1)) {
+            if ($r.End -gt $last.End) { $last.End = $r.End }
+        }
+        else {
+            $merged += $r
+        }
+    }
+
+    $width = Get-ConsoleWidth
+    $len = ($Line -replace "`r","").Length
+    $pad = if ($len -ge $width -or $width -le 0) { 0 } else { [int]([Math]::Floor(($width - $len) / 2)) }
+    $spaces = ' ' * $pad
+
+    try {
+        $origFg = [Console]::ForegroundColor
+        $origBg = [Console]::BackgroundColor
+
+        if ($spaces) {
+            [Console]::ForegroundColor = [ConsoleColor]::DarkRed
+            [Console]::BackgroundColor = [ConsoleColor]::Black
+            [Console]::Write($spaces)
+        }
+
+        [Console]::ForegroundColor = [ConsoleColor]::DarkRed
+        [Console]::BackgroundColor = [ConsoleColor]::Black
+        [Console]::Write($prefix)
+
+        $chars = $inner.ToCharArray()
+        for ($i = 0; $i -lt $chars.Length; $i++) {
+            $useAccent = $false
+            foreach ($r in $merged) {
+                if ($i -ge $r.Start -and $i -le $r.End) { $useAccent = $true; break }
+            }
+            [Console]::ForegroundColor = if ($useAccent) { $AccentColor } else { $DefaultColor }
+            [Console]::BackgroundColor = [ConsoleColor]::Black
+            [Console]::Write($chars[$i])
+        }
+
+        [Console]::ForegroundColor = [ConsoleColor]::DarkRed
+        [Console]::BackgroundColor = [ConsoleColor]::Black
+        [Console]::Write($suffix)
+        [Console]::WriteLine()
+    }
+    catch {
+        Write-Host $Line -ForegroundColor $DefaultColor
+    }
+    finally {
+        try {
+            if ($null -ne $origFg) { [Console]::ForegroundColor = $origFg }
+            if ($null -ne $origBg) { [Console]::BackgroundColor = $origBg }
+        } catch {}
+    }
+}
+
+function Write-Banner {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string[]]$Lines,
+        [int[]]$LogoLineIndexes = $script:bannerLogoLineIndexes,
+        [int[]]$FireLineIndexes = $script:bannerFireLineIndexes,
+        [hashtable]$AccentLines = $script:bannerAccentLines
+    )
+
+    if ($usingCustomHost) {
+        for ($i = 0; $i -lt $Lines.Count; $i++) {
+            $lineColor = [ConsoleColor]::DarkRed
+            if ($FireLineIndexes -contains $i) {
+                $relative = [array]::IndexOf($FireLineIndexes, $i)
+                if ($relative -le 2) { $lineColor = [ConsoleColor]::Yellow }
+                elseif ($relative -le 5) { $lineColor = [ConsoleColor]::Red }
+                else { $lineColor = [ConsoleColor]::DarkRed }
+            }
+            elseif ($LogoLineIndexes -contains $i) { $lineColor = [ConsoleColor]::White }
+            Write-Host $Lines[$i] -ForegroundColor $lineColor
+        }
+        return
+    }
+
+    $framePattern = '^(?<prefix>\s*\|\s{3}\|\s)(?<inner>.*?)(?<suffix>\s\|\s{3}\|)$'
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $line = $Lines[$i]
+        if ($AccentLines.ContainsKey($i) -and ($line -match $framePattern)) {
+            Write-CenteredAccentLine -Line $line -AccentStrings $AccentLines[$i]
+        }
+        elseif ($FireLineIndexes -contains $i) {
+            $relative = [array]::IndexOf($FireLineIndexes, $i)
+            Write-CenteredFireLine -Line $line -RelativeIndex $relative
+        }
+        elseif (($LogoLineIndexes -contains $i) -and ($line -match $framePattern)) {
+            Write-CenteredColoredLine -Segments @($Matches['prefix'], $Matches['inner'], $Matches['suffix']) -ForegroundColors @('DarkRed', 'White', 'DarkRed')
+        }
+        else {
+            Write-Host $line -ForegroundColor DarkRed
+        }
+    }
+}
 
 $welcomeMessage = @'
 //////////////////////////////////////////////
@@ -761,7 +1047,7 @@ $continueMessage = 'Press Enter to continue'
 # Clear the console window before showing the installer and message
 Clear-Host
 Write-Host "`n"
-Write-Host $banner -ForegroundColor DarkRed
+Write-Banner -Lines $bannerLines
 Write-Host "`n"
 Write-Host $welcomeMessage -ForegroundColor White
 Write-Host "`n"
@@ -772,7 +1058,7 @@ Write-Host $continueMessage -ForegroundColor White
 [void](Read-Host)
 Clear-Host
 Write-Host "`n"
-Write-Host $banner -ForegroundColor DarkRed
+Write-Banner -Lines $bannerLines
 Write-Host "`n`n`n"
 
 #Check to see if Java is installed
