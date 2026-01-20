@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net5.0</TargetFramework>
+    <AssemblyName>TheMinecraftServer.net Mods Installer</AssemblyName>
+    <RootNamespace>Launcher</RootNamespace>
+    <Nullable>enable</Nullable>
+    <Version>1.21.7</Version>
+    <ApplicationIcon>..\bin\server-icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\\bin\\TheMinecraftServer.net Mods Installer.ps1">
+      <LogicalName>assets/bin/TheMinecraftServer.net Mods Installer.ps1</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\\bin\\Fabric Installer.jar">
+      <LogicalName>assets/bin/Fabric Installer.jar</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\\bin\\server-icon.ico">
+      <LogicalName>assets/bin/server-icon.ico</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\\bin\\mods\\**\\*">
+      <LogicalName>assets/bin/mods/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>
