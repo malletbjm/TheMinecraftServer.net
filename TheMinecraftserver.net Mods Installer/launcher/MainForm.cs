@@ -144,6 +144,32 @@ namespace Launcher
             HideCaretSafe(_output);
         }
 
+        public void AppendSegments((string Text, Color Color)[] segments, Color background, bool center)
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() => AppendSegments(segments, background, center)));
+                return;
+            }
+
+            _output.SelectionStart = _output.TextLength;
+            _output.SelectionLength = 0;
+            _output.SelectionBackColor = background;
+            _output.SelectionAlignment = center ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+
+            foreach (var segment in segments)
+            {
+                _output.SelectionColor = segment.Color;
+                _output.AppendText(segment.Text);
+            }
+
+            _output.AppendText(Environment.NewLine);
+            _output.SelectionColor = _output.ForeColor;
+            _output.SelectionBackColor = _output.BackColor;
+            _output.ScrollToCaret();
+            HideCaretSafe(_output);
+        }
+
         public void ClearOutput()
         {
             if (InvokeRequired)

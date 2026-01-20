@@ -17,6 +17,7 @@ namespace Launcher
         private const string ColorPrefix = "TMS_COLOR|";
         private const string StatusPrefix = "TMS_STATUS|";
         private const string ClearMarker = "TMS_CLEAR";
+        private const string SegmentBase64Prefix = "TMS_SEGB64|";
 
         [STAThread]
         private static void Main()
@@ -173,6 +174,11 @@ namespace Launcher
                     }
                     System.Drawing.Color lineColor = color;
                     string outputLine = localLine;
+                    if (TryParseSegmentLineBase64(localLine, out var segments, out var center))
+                    {
+                        form.AppendSegments(segments, System.Drawing.Color.Black, center);
+                        continue;
+                    }
                     if (TryParseColoredLine(localLine, out var parsedLine, out var parsedColor))
                     {
                         outputLine = parsedLine;
@@ -321,6 +327,53 @@ namespace Launcher
             text = parts[1];
             color = MapConsoleColor(parts[0], System.Drawing.Color.White);
             return true;
+        }
+
+        private static bool TryParseSegmentLineBase64(string line, out (string Text, System.Drawing.Color Color)[] segments, out bool center)
+        {
+            segments = Array.Empty<(string Text, System.Drawing.Color Color)>();
+            center = true;
+
+            if (string.IsNullOrEmpty(line) || !line.StartsWith(SegmentBase64Prefix, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            string payload = line.Substring(SegmentBase64Prefix.Length);
+            string[] parts = payload.Split('|');
+            if (parts.Length < 3 || (parts.Length - 1) % 2 != 0)
+            {
+                return false;
+            }
+
+            string align = parts[0];
+            center = align.Equals("CENTER", StringComparison.OrdinalIgnoreCase);
+            int pairCount = (parts.Length - 1) / 2;
+            var result = new (string Text, System.Drawing.Color Color)[pairCount];
+            int idx = 0;
+            for (int i = 1; i + 1 < parts.Length; i += 2)
+            {
+                string colorName = parts[i];
+                string text = DecodeBase64(parts[i + 1]);
+                System.Drawing.Color mapped = MapConsoleColor(colorName, System.Drawing.Color.White);
+                result[idx++] = (text, mapped);
+            }
+
+            segments = result;
+            return true;
+        }
+
+        private static string DecodeBase64(string encoded)
+        {
+            try
+            {
+                byte[] data = Convert.FromBase64String(encoded);
+                return System.Text.Encoding.UTF8.GetString(data);
+            }
+            catch
+            {
+                return string.Empty;
+            }
         }
 
         private static bool TryParseStatusLine(string line, out string text, out System.Drawing.Color color)

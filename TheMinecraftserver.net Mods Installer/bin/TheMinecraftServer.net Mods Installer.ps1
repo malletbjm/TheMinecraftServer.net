@@ -744,6 +744,7 @@ $script:bannerAccentLines = @{
         "(_))  ((_))((_|_))  ((_) _(_/((_))"
     )
 }
+$script:guiSegmentPrefix = "TMS_SEGB64|"
 
 function Convert-ToConsoleColor {
     param(
@@ -902,34 +903,10 @@ function Write-CenteredAccentLine {
     $inner = $Matches['inner']
     $suffix = $Matches['suffix']
 
-    $ranges = @()
-    foreach ($needle in $AccentStrings) {
-        if ([string]::IsNullOrWhiteSpace($needle)) { continue }
-        $idx = $inner.IndexOf($needle, [StringComparison]::Ordinal)
-        if ($idx -ge 0) {
-            $ranges += [pscustomobject]@{ Start = $idx; End = $idx + $needle.Length - 1 }
-        }
-    }
-
+    $ranges = Get-AccentRanges -Inner $inner -AccentStrings $AccentStrings
     if (-not $ranges -or $ranges.Count -eq 0) {
         Write-Host $Line -ForegroundColor $DefaultColor
         return
-    }
-
-    $ranges = $ranges | Sort-Object Start
-    $merged = @()
-    foreach ($r in $ranges) {
-        if (-not $merged) {
-            $merged += $r
-            continue
-        }
-        $last = $merged[-1]
-        if ($r.Start -le ($last.End + 1)) {
-            if ($r.End -gt $last.End) { $last.End = $r.End }
-        }
-        else {
-            $merged += $r
-        }
     }
 
     $width = Get-ConsoleWidth
@@ -954,7 +931,7 @@ function Write-CenteredAccentLine {
         $chars = $inner.ToCharArray()
         for ($i = 0; $i -lt $chars.Length; $i++) {
             $useAccent = $false
-            foreach ($r in $merged) {
+            foreach ($r in $ranges) {
                 if ($i -ge $r.Start -and $i -le $r.End) { $useAccent = $true; break }
             }
             [Console]::ForegroundColor = if ($useAccent) { $AccentColor } else { $DefaultColor }
@@ -978,6 +955,208 @@ function Write-CenteredAccentLine {
     }
 }
 
+function Get-AccentRanges {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Inner,
+        [Parameter(Mandatory=$true)]
+        [string[]]$AccentStrings
+    )
+
+    $ranges = @()
+    foreach ($needle in $AccentStrings) {
+        if ([string]::IsNullOrWhiteSpace($needle)) { continue }
+        $idx = $Inner.IndexOf($needle, [StringComparison]::Ordinal)
+        if ($idx -ge 0) {
+            $ranges += [pscustomobject]@{ Start = $idx; End = $idx + $needle.Length - 1 }
+        }
+    }
+
+    if (-not $ranges -or $ranges.Count -eq 0) {
+        return @()
+    }
+
+    $ranges = $ranges | Sort-Object Start
+    $merged = @()
+    foreach ($r in $ranges) {
+        if (-not $merged) {
+            $merged += $r
+            continue
+        }
+        $last = $merged[-1]
+        if ($r.Start -le ($last.End + 1)) {
+            if ($r.End -gt $last.End) { $last.End = $r.End }
+        }
+        else {
+            $merged += $r
+        }
+    }
+
+    return $merged
+}
+
+function Write-GuiSegmentLine {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string[]]$Segments,
+        [Parameter(Mandatory=$true)]
+        [ConsoleColor[]]$Colors,
+        [switch]$Center
+    )
+
+    if ($Segments.Count -ne $Colors.Count) {
+        Microsoft.PowerShell.Utility\Write-Output ("TMS_COLOR|White|{0}" -f ($Segments -join ''))
+        return
+    }
+
+    function Convert-SegmentToBase64 {
+        param([string]$Text)
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Text)
+        return [Convert]::ToBase64String($bytes)
+    }
+
+    $tokens = @()
+    if ($Center.IsPresent) {
+        $tokens += 'CENTER'
+    }
+    else {
+        $tokens += 'LEFT'
+    }
+    for ($i = 0; $i -lt $Segments.Count; $i++) {
+        $tokens += $Colors[$i].ToString()
+        $tokens += (Convert-SegmentToBase64 -Text $Segments[$i])
+    }
+
+    $payload = $tokens -join '|'
+    $line = $script:guiSegmentPrefix + $payload
+    Microsoft.PowerShell.Utility\Write-Output $line
+}
+
+function Write-GuiAccentLine {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Line,
+        [Parameter(Mandatory=$true)]
+        [string[]]$AccentStrings,
+        [ConsoleColor]$DefaultColor = [ConsoleColor]::White,
+        [ConsoleColor]$AccentColor = [ConsoleColor]::Red
+    )
+
+    $framePattern = '^(?<prefix>\s*\|\s{3}\|\s)(?<inner>.*?)(?<suffix>\s\|\s{3}\|)$'
+    if (-not ($Line -match $framePattern)) {
+        Write-Host $Line -ForegroundColor $DefaultColor
+        return
+    }
+
+    $prefix = $Matches['prefix']
+    $inner = $Matches['inner']
+    $suffix = $Matches['suffix']
+
+    $ranges = Get-AccentRanges -Inner $inner -AccentStrings $AccentStrings
+    if (-not $ranges -or $ranges.Count -eq 0) {
+        Write-Host $Line -ForegroundColor $DefaultColor
+        return
+    }
+
+    $segments = @()
+    $colors = @()
+    $segments += $prefix
+    $colors += [ConsoleColor]::DarkRed
+
+    $chars = $inner.ToCharArray()
+    $current = ""
+    $currentColor = $DefaultColor
+    for ($i = 0; $i -lt $chars.Length; $i++) {
+        $useAccent = $false
+        foreach ($r in $ranges) {
+            if ($i -ge $r.Start -and $i -le $r.End) { $useAccent = $true; break }
+        }
+        $nextColor = if ($useAccent) { $AccentColor } else { $DefaultColor }
+        if ($i -eq 0) {
+            $currentColor = $nextColor
+        }
+        if ($nextColor -ne $currentColor) {
+            $segments += $current
+            $colors += $currentColor
+            $current = ""
+            $currentColor = $nextColor
+        }
+        $current += $chars[$i]
+    }
+    if ($current.Length -gt 0) {
+        $segments += $current
+        $colors += $currentColor
+    }
+
+    $segments += $suffix
+    $colors += [ConsoleColor]::DarkRed
+
+    Write-GuiSegmentLine -Segments $segments -Colors $colors -Center
+}
+
+function Write-GuiLogoLine {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Line
+    )
+
+    $framePattern = '^(?<prefix>\s*\|\s{3}\|\s)(?<inner>.*?)(?<suffix>\s\|\s{3}\|)$'
+    if (-not ($Line -match $framePattern)) {
+        Write-Host $Line -ForegroundColor White
+        return
+    }
+
+    Write-GuiSegmentLine -Segments @($Matches['prefix'], $Matches['inner'], $Matches['suffix']) -Colors @([ConsoleColor]::DarkRed, [ConsoleColor]::White, [ConsoleColor]::DarkRed) -Center
+}
+
+function Write-GuiFireLine {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Line,
+        [int]$RelativeIndex = 0
+    )
+
+    $framePattern = '^(?<prefix>\s*\|\s{3}\|\s)(?<inner>.*?)(?<suffix>\s\|\s{3}\|)$'
+    if (-not ($Line -match $framePattern)) {
+        Write-Host $Line -ForegroundColor DarkRed
+        return
+    }
+
+    $baseColor = [ConsoleColor]::DarkRed
+    if ($RelativeIndex -le 2) { $baseColor = [ConsoleColor]::Yellow }
+    elseif ($RelativeIndex -le 5) { $baseColor = [ConsoleColor]::Red }
+
+    $segments = @()
+    $colors = @()
+    $segments += $Matches['prefix']
+    $colors += [ConsoleColor]::DarkRed
+
+    $chars = $Matches['inner'].ToCharArray()
+    $current = ""
+    $currentColor = $null
+    for ($i = 0; $i -lt $chars.Length; $i++) {
+        $ch = $chars[$i]
+        $nextColor = if ($ch -eq ' ') { [ConsoleColor]::DarkRed } else { $baseColor }
+        if ($null -eq $currentColor) { $currentColor = $nextColor }
+        if ($nextColor -ne $currentColor) {
+            $segments += $current
+            $colors += $currentColor
+            $current = ""
+            $currentColor = $nextColor
+        }
+        $current += $ch
+    }
+    if ($current.Length -gt 0) {
+        $segments += $current
+        $colors += $currentColor
+    }
+
+    $segments += $Matches['suffix']
+    $colors += [ConsoleColor]::DarkRed
+
+    Write-GuiSegmentLine -Segments $segments -Colors $colors -Center
+}
+
 function Write-Banner {
     param(
         [Parameter(Mandatory=$true)]
@@ -990,11 +1169,18 @@ function Write-Banner {
     if ($usingCustomHost) {
         for ($i = 0; $i -lt $Lines.Count; $i++) {
             $lineColor = [ConsoleColor]::DarkRed
-            if ($FireLineIndexes -contains $i) {
+            if ($AccentLines.ContainsKey($i)) {
+                Write-GuiAccentLine -Line $Lines[$i] -AccentStrings $AccentLines[$i]
+                continue
+            }
+            elseif ($FireLineIndexes -contains $i) {
                 $relative = [array]::IndexOf($FireLineIndexes, $i)
-                if ($relative -le 2) { $lineColor = [ConsoleColor]::Yellow }
-                elseif ($relative -le 5) { $lineColor = [ConsoleColor]::Red }
-                else { $lineColor = [ConsoleColor]::DarkRed }
+                Write-GuiFireLine -Line $Lines[$i] -RelativeIndex $relative
+                continue
+            }
+            elseif ($LogoLineIndexes -contains $i) {
+                Write-GuiLogoLine -Line $Lines[$i]
+                continue
             }
             elseif ($LogoLineIndexes -contains $i) { $lineColor = [ConsoleColor]::White }
             Write-Host $Lines[$i] -ForegroundColor $lineColor
