@@ -1,3 +1,5 @@
 # Ignore launcher build output
 /TheMinecraftserver.net Mods Installer/launcher/obj/
 /TheMinecraftserver.net Mods Installer/launcher/bin/
+/TheMinecraftserver.net Mods Installer/publish/
+/TheMinecraftserver.net Mods Installer/*.exe
