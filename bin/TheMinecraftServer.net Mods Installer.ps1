@@ -1,6 +1,7 @@
 $minecraftVersion = "1.21.7"
 $minecraftDirectory = "$env:APPDATA\.minecraft"
-$modsSource = "$PWD\bin\mods"
+$scriptRoot = $PSScriptRoot
+$modsSource = Join-Path $scriptRoot "mods"
 $modsDestination = "$minecraftDirectory\mods"
 $debug = $false
 try {
@@ -11,6 +12,97 @@ try {
 catch {
     # Ignore if unable to set window title
 }
+# Set console window icon (best-effort)
+function Set-ConsoleWindowIcon {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$IconPath
+    )
+    try {
+        if (-not (Test-Path -LiteralPath $IconPath)) { return }
+        if (-not ("Win32.ConsoleIcon" -as [type])) {
+            Add-Type -Namespace Win32 -Name ConsoleIcon -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError=true)]
+public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll", SetLastError=true)]
+public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+[DllImport("user32.dll", SetLastError=true)]
+public static extern IntPtr LoadImage(IntPtr hInst, string lpszName, uint uType, int cxDesired, int cyDesired, uint fuLoad);
+public const int WM_SETICON = 0x0080;
+public const int ICON_SMALL = 0;
+public const int ICON_BIG = 1;
+public const uint IMAGE_ICON = 1;
+public const uint LR_LOADFROMFILE = 0x0010;
+'@
+        }
+
+        $hWnd = [Win32.ConsoleIcon]::GetConsoleWindow()
+        if ($hWnd -eq [IntPtr]::Zero) { return }
+
+        $hSmall = [Win32.ConsoleIcon]::LoadImage([IntPtr]::Zero, $IconPath, [Win32.ConsoleIcon]::IMAGE_ICON, 16, 16, [Win32.ConsoleIcon]::LR_LOADFROMFILE)
+        $hBig = [Win32.ConsoleIcon]::LoadImage([IntPtr]::Zero, $IconPath, [Win32.ConsoleIcon]::IMAGE_ICON, 32, 32, [Win32.ConsoleIcon]::LR_LOADFROMFILE)
+        if ($hSmall -ne [IntPtr]::Zero) {
+            [void][Win32.ConsoleIcon]::SendMessage($hWnd, [Win32.ConsoleIcon]::WM_SETICON, [IntPtr][Win32.ConsoleIcon]::ICON_SMALL, $hSmall)
+        }
+        if ($hBig -ne [IntPtr]::Zero) {
+            [void][Win32.ConsoleIcon]::SendMessage($hWnd, [Win32.ConsoleIcon]::WM_SETICON, [IntPtr][Win32.ConsoleIcon]::ICON_BIG, $hBig)
+        }
+    }
+    catch {
+        # Ignore if host does not support setting the icon
+    }
+}
+
+$iconPath = Join-Path $scriptRoot "server-icon.ico"
+Set-ConsoleWindowIcon -IconPath $iconPath
+# Attempt to reduce console font size for a "zoomed out" look (best-effort)
+function Set-ConsoleFontSize {
+    param(
+        [int]$Size = 14,
+        [string]$FontName = 'Consolas'
+    )
+    try {
+        if (-not ("Win32.ConsoleFont" -as [type])) {
+            Add-Type -Namespace Win32 -Name ConsoleFont -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError=true)]
+public static extern IntPtr GetStdHandle(int nStdHandle);
+[DllImport("kernel32.dll", SetLastError=true)]
+public static extern bool SetCurrentConsoleFontEx(IntPtr consoleOutput, bool maximumWindow, ref CONSOLE_FONT_INFO_EX consoleFont);
+[StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+public struct CONSOLE_FONT_INFO_EX {
+    public uint cbSize;
+    public uint nFont;
+    public COORD dwFontSize;
+    public int FontFamily;
+    public int FontWeight;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst=32)]
+    public string FaceName;
+}
+[StructLayout(LayoutKind.Sequential)]
+public struct COORD {
+    public short X;
+    public short Y;
+}
+'@
+        }
+
+        $handle = [Win32.ConsoleFont]::GetStdHandle(-11) # STD_OUTPUT_HANDLE
+        $cfi = New-Object Win32.ConsoleFont+CONSOLE_FONT_INFO_EX
+        $cfi.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($cfi)
+        $cfi.FaceName = $FontName
+        $cfi.dwFontSize = New-Object Win32.ConsoleFont+COORD
+        $cfi.dwFontSize.X = 0
+        $cfi.dwFontSize.Y = [short]$Size
+        $cfi.FontFamily = 54
+        $cfi.FontWeight = 400
+        [void][Win32.ConsoleFont]::SetCurrentConsoleFontEx($handle, $false, [ref]$cfi)
+    }
+    catch {
+        # Ignore if host does not support changing the console font
+    }
+}
+
+Set-ConsoleFontSize -Size 10
 # Center all console text output helpers (place this at $PLACEHOLDER$)
 function Get-ConsoleWidth {
     try { return $Host.UI.RawUI.WindowSize.Width } catch { return [Console]::WindowWidth }
@@ -104,6 +196,7 @@ try {
         $raw.BackgroundColor = 'Black'
         $raw.ForegroundColor = 'White'
     }
+    try { [Console]::CursorVisible = $false } catch {}
     Clear-Host
 }
 catch {
@@ -126,7 +219,7 @@ catch {
 try {
     $raw = $Host.UI.RawUI
     $desiredWidth = 120
-    $desiredHeight = 28
+    $desiredHeight = 40
 
     $maxWidth = $raw.MaxPhysicalWindowSize.Width
     $maxHeight = $raw.MaxPhysicalWindowSize.Height
@@ -148,12 +241,68 @@ try {
 catch {
     # If resizing/positioning fails (remote session, restricted host, etc.), continue without stopping the script
 }
+try {
+    # Fallbacks for hosts that ignore RawUI sizing (e.g., Windows Terminal)
+    mode con: cols=$desiredWidth lines=$desiredHeight | Out-Null
+    if ($env:WT_SESSION) {
+        # Request terminal resize via ANSI escape sequence (rows;cols)
+        [Console]::Write("`e[8;{0};{1}t" -f $desiredHeight, $desiredWidth)
+    }
+}
+catch {
+    # Ignore if host does not support resizing
+}
+try {
+    if (-not ("Win32.ConsoleWindow" -as [type])) {
+        Add-Type -Namespace Win32 -Name ConsoleWindow -MemberDefinition @'
+[DllImport("kernel32.dll", SetLastError=true)]
+public static extern IntPtr GetConsoleWindow();
+[DllImport("user32.dll", SetLastError=true)]
+public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+[DllImport("user32.dll", SetLastError=true)]
+public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+[StructLayout(LayoutKind.Sequential)]
+public struct RECT {
+    public int Left;
+    public int Top;
+    public int Right;
+    public int Bottom;
+}
+'@
+    }
+
+    Add-Type -AssemblyName System.Windows.Forms
+
+    $hWnd = [Win32.ConsoleWindow]::GetConsoleWindow()
+    if ($hWnd -ne [IntPtr]::Zero) {
+        $screenW = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Width
+        $screenH = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Height
+
+        $SWP_NOSIZE = 0x0001
+        $SWP_NOZORDER = 0x0004
+        $rect = New-Object Win32.ConsoleWindow+RECT
+
+        # Retry a few quick times so centering happens as soon as the window size is valid
+        for ($i = 0; $i -lt 5; $i++) {
+            if ([Win32.ConsoleWindow]::GetWindowRect($hWnd, [ref]$rect)) {
+                $winWidth = $rect.Right - $rect.Left
+                $winHeight = $rect.Bottom - $rect.Top
+                if ($winWidth -gt 0 -and $winHeight -gt 0) {
+                    $newX = [Math]::Max(0, [int](($screenW - $winWidth) / 2))
+                    $newY = [Math]::Max(0, [int](($screenH - $winHeight) / 2))
+                    [void][Win32.ConsoleWindow]::SetWindowPos($hWnd, [IntPtr]::Zero, $newX, $newY, 0, 0, $SWP_NOSIZE -bor $SWP_NOZORDER)
+                    break
+                }
+            }
+            Start-Sleep -Milliseconds 10
+        }
+    }
+}
+catch {
+    # Ignore if host does not support moving the window
+}
 
 $banner = @'
-
-
-
-
  ( ___ )                                                                                                      ( ___ )
   |   |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|   | 
   |   |                    *                                     (                                             |   | 
@@ -166,10 +315,6 @@ $banner = @'
   |   |   |_| |_||_\___||_|  |_||_|_||_|\___\__|_| \__,_|_|  \__|___/\___||_|  \_/ \___||_|(_)_||_|\___| \__|  |   | 
   |___|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|___| 
  (_____)                                                                                                      (_____)
-
-
-
-
 '@
 
 $welcomeMessage = @'
@@ -197,16 +342,20 @@ $continueMessage = 'Press Enter to continue or Ctrl+C to cancel'
 
 # Clear the console window before showing the installer and message
 Clear-Host
+Write-Host "`n"
 Write-Host $banner -ForegroundColor DarkRed
+Write-Host "`n"
 Write-Host $welcomeMessage -ForegroundColor White
-Write-Host "`n`n`n"
+Write-Host "`n"
 Write-Host $infoMessage -ForegroundColor White
-Write-Host "`n`n`n`n"
+Write-Host "`n`n"
 Write-Host $continueMessage -ForegroundColor White
 
 [void](Read-Host)
 Clear-Host
+Write-Host "`n"
 Write-Host $banner -ForegroundColor DarkRed
+Write-Host "`n`n`n"
 
 #Check to see if Java is installed
 $javaCheck = Get-Command java -ErrorAction SilentlyContinue
@@ -228,7 +377,7 @@ if (-not (Test-Path -Path $minecraftDirectory)) {
 
 #Run Fabric Installer
 try {
-    $jarPath = Join-Path $PWD "bin\Fabric Installer.jar"
+    $jarPath = Join-Path $scriptRoot "Fabric Installer.jar"
     # Run java and capture both stdout and stderr, suppressing direct console output
     $output = & java -jar "$jarPath" client -mcversion $minecraftVersion -dir $minecraftDirectory -downloadMinecraft 2>&1
     # If java returned a non-zero exit code, throw so the catch block runs
