@@ -1,12 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk.WindowsDesktop">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net5.0</TargetFramework>
+    <TargetFramework>net8.0-windows</TargetFramework>
     <AssemblyName>TheMinecraftServer.net Mods Installer</AssemblyName>
     <RootNamespace>Launcher</RootNamespace>
     <Nullable>enable</Nullable>
     <Version>1.21.7</Version>
     <ApplicationIcon>..\bin\server-icon.ico</ApplicationIcon>
+    <UseWindowsForms>true</UseWindowsForms>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,5 +23,9 @@
     <EmbeddedResource Include="..\\bin\\mods\\**\\*">
       <LogicalName>assets/bin/mods/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="PowerShellHost.cs" />
   </ItemGroup>
 </Project>

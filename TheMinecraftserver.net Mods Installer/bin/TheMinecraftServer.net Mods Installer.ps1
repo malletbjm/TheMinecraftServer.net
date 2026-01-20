@@ -1,9 +1,37 @@
+param(
+    [switch]$SkipWindowTweaks,
+    [switch]$ForceConsole
+)
+$usingCustomHost = $env:TMS_HOST_UI -eq 'gui'
 $minecraftVersion = "1.21.7"
 $minecraftDirectory = "$env:APPDATA\.minecraft"
 $scriptRoot = $PSScriptRoot
+$launcherPath = $null
+if (-not $usingCustomHost -and -not $ForceConsole) {
+    $launcherCandidates = @(
+        (Join-Path $scriptRoot "TheMinecraftServer.net Mods Installer.exe"),
+        (Join-Path (Split-Path $scriptRoot -Parent) "TheMinecraftServer.net Mods Installer.exe")
+    )
+    $launcherPath = $launcherCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if ($launcherPath) {
+        Start-Process -FilePath $launcherPath | Out-Null
+        exit
+    }
+}
 $modsSource = Join-Path $scriptRoot "mods"
 $modsDestination = "$minecraftDirectory\mods"
 $debug = $false
+if (-not $usingCustomHost) {
+    try {
+        [Console]::BackgroundColor = 'Black'
+        [Console]::ForegroundColor = 'White'
+        if ($Host -and $Host.UI -and $Host.UI.RawUI) {
+            $raw = $Host.UI.RawUI
+            $raw.BackgroundColor = 'Black'
+            $raw.ForegroundColor = 'White'
+        }
+    } catch {}
+}
 try {
     $windowTitle = "TheMinecraftServer.net Mods Installer - Version $minecraftVersion"
     try { if ($Host -and $Host.UI -and $Host.UI.RawUI) { $Host.UI.RawUI.WindowTitle = $windowTitle } } catch {}
@@ -12,16 +40,17 @@ try {
 catch {
     # Ignore if unable to set window title
 }
-# Set console window icon (best-effort)
-function Set-ConsoleWindowIcon {
-    param(
-        [Parameter(Mandatory=$true)]
-        [string]$IconPath
-    )
-    try {
-        if (-not (Test-Path -LiteralPath $IconPath)) { return }
-        if (-not ("Win32.ConsoleIcon" -as [type])) {
-            Add-Type -Namespace Win32 -Name ConsoleIcon -MemberDefinition @'
+if (-not $usingCustomHost) {
+    # Set console window icon (best-effort)
+    function Set-ConsoleWindowIcon {
+        param(
+            [Parameter(Mandatory=$true)]
+            [string]$IconPath
+        )
+        try {
+            if (-not (Test-Path -LiteralPath $IconPath)) { return }
+            if (-not ("Win32.ConsoleIcon" -as [type])) {
+                Add-Type -Namespace Win32 -Name ConsoleIcon -MemberDefinition @'
 [DllImport("kernel32.dll", SetLastError=true)]
 public static extern IntPtr GetConsoleWindow();
 [DllImport("user32.dll", SetLastError=true)]
@@ -34,36 +63,38 @@ public const int ICON_BIG = 1;
 public const uint IMAGE_ICON = 1;
 public const uint LR_LOADFROMFILE = 0x0010;
 '@
-        }
+            }
 
-        $hWnd = [Win32.ConsoleIcon]::GetConsoleWindow()
-        if ($hWnd -eq [IntPtr]::Zero) { return }
+            $hWnd = [Win32.ConsoleIcon]::GetConsoleWindow()
+            if ($hWnd -eq [IntPtr]::Zero) { return }
 
-        $hSmall = [Win32.ConsoleIcon]::LoadImage([IntPtr]::Zero, $IconPath, [Win32.ConsoleIcon]::IMAGE_ICON, 16, 16, [Win32.ConsoleIcon]::LR_LOADFROMFILE)
-        $hBig = [Win32.ConsoleIcon]::LoadImage([IntPtr]::Zero, $IconPath, [Win32.ConsoleIcon]::IMAGE_ICON, 32, 32, [Win32.ConsoleIcon]::LR_LOADFROMFILE)
-        if ($hSmall -ne [IntPtr]::Zero) {
-            [void][Win32.ConsoleIcon]::SendMessage($hWnd, [Win32.ConsoleIcon]::WM_SETICON, [IntPtr][Win32.ConsoleIcon]::ICON_SMALL, $hSmall)
+            $hSmall = [Win32.ConsoleIcon]::LoadImage([IntPtr]::Zero, $IconPath, [Win32.ConsoleIcon]::IMAGE_ICON, 16, 16, [Win32.ConsoleIcon]::LR_LOADFROMFILE)
+            $hBig = [Win32.ConsoleIcon]::LoadImage([IntPtr]::Zero, $IconPath, [Win32.ConsoleIcon]::IMAGE_ICON, 32, 32, [Win32.ConsoleIcon]::LR_LOADFROMFILE)
+            if ($hSmall -ne [IntPtr]::Zero) {
+                [void][Win32.ConsoleIcon]::SendMessage($hWnd, [Win32.ConsoleIcon]::WM_SETICON, [IntPtr][Win32.ConsoleIcon]::ICON_SMALL, $hSmall)
+            }
+            if ($hBig -ne [IntPtr]::Zero) {
+                [void][Win32.ConsoleIcon]::SendMessage($hWnd, [Win32.ConsoleIcon]::WM_SETICON, [IntPtr][Win32.ConsoleIcon]::ICON_BIG, $hBig)
+            }
         }
-        if ($hBig -ne [IntPtr]::Zero) {
-            [void][Win32.ConsoleIcon]::SendMessage($hWnd, [Win32.ConsoleIcon]::WM_SETICON, [IntPtr][Win32.ConsoleIcon]::ICON_BIG, $hBig)
+        catch {
+            # Ignore if host does not support setting the icon
         }
     }
-    catch {
-        # Ignore if host does not support setting the icon
-    }
+
+    $iconPath = Join-Path $scriptRoot "server-icon.ico"
+    Set-ConsoleWindowIcon -IconPath $iconPath
 }
-
-$iconPath = Join-Path $scriptRoot "server-icon.ico"
-Set-ConsoleWindowIcon -IconPath $iconPath
-# Attempt to reduce console font size for a "zoomed out" look (best-effort)
-function Set-ConsoleFontSize {
-    param(
-        [int]$Size = 14,
-        [string]$FontName = 'Consolas'
-    )
-    try {
-        if (-not ("Win32.ConsoleFont" -as [type])) {
-            Add-Type -Namespace Win32 -Name ConsoleFont -MemberDefinition @'
+if (-not $usingCustomHost) {
+    # Attempt to reduce console font size for a "zoomed out" look (best-effort)
+    function Set-ConsoleFontSize {
+        param(
+            [int]$Size = 14,
+            [string]$FontName = 'Consolas'
+        )
+        try {
+            if (-not ("Win32.ConsoleFont" -as [type])) {
+                Add-Type -Namespace Win32 -Name ConsoleFont -MemberDefinition @'
 [DllImport("kernel32.dll", SetLastError=true)]
 public static extern IntPtr GetStdHandle(int nStdHandle);
 [DllImport("kernel32.dll", SetLastError=true)]
@@ -84,177 +115,207 @@ public struct COORD {
     public short Y;
 }
 '@
+            }
+
+            $handle = [Win32.ConsoleFont]::GetStdHandle(-11) # STD_OUTPUT_HANDLE
+            $cfi = New-Object Win32.ConsoleFont+CONSOLE_FONT_INFO_EX
+            $cfi.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($cfi)
+            $cfi.FaceName = $FontName
+            $cfi.dwFontSize = New-Object Win32.ConsoleFont+COORD
+            $cfi.dwFontSize.X = 0
+            $cfi.dwFontSize.Y = [short]$Size
+            $cfi.FontFamily = 54
+            $cfi.FontWeight = 400
+            [void][Win32.ConsoleFont]::SetCurrentConsoleFontEx($handle, $false, [ref]$cfi)
         }
-
-        $handle = [Win32.ConsoleFont]::GetStdHandle(-11) # STD_OUTPUT_HANDLE
-        $cfi = New-Object Win32.ConsoleFont+CONSOLE_FONT_INFO_EX
-        $cfi.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($cfi)
-        $cfi.FaceName = $FontName
-        $cfi.dwFontSize = New-Object Win32.ConsoleFont+COORD
-        $cfi.dwFontSize.X = 0
-        $cfi.dwFontSize.Y = [short]$Size
-        $cfi.FontFamily = 54
-        $cfi.FontWeight = 400
-        [void][Win32.ConsoleFont]::SetCurrentConsoleFontEx($handle, $false, [ref]$cfi)
-    }
-    catch {
-        # Ignore if host does not support changing the console font
-    }
-}
-
-Set-ConsoleFontSize -Size 10
-# Center all console text output helpers (place this at $PLACEHOLDER$)
-function Get-ConsoleWidth {
-    try { return $Host.UI.RawUI.WindowSize.Width } catch { return [Console]::WindowWidth }
-}
-
-function Center-WriteLine {
-    param(
-        [string]$Line,
-        $ForegroundColor = [ConsoleColor]::White,
-        $BackgroundColor = [ConsoleColor]::Black,
-        [switch]$NoNewLine
-    )
-
-    function Convert-ToConsoleColor($val, $default) {
-        if ($val -is [System.ConsoleColor]) { return $val }
-        $s = [string]$val
-        if ($s -match '::') { $s = $s.Split('::')[-1] }
-        $s = $s.Trim('[',']','"',"'",' ')
-        try {
-            return [System.Enum]::Parse([System.ConsoleColor], $s)
-        } catch {
-            return $default
+        catch {
+            # Ignore if host does not support changing the console font
         }
     }
 
-    if ($null -eq $Line) { $Line = '' }
-    $width = Get-ConsoleWidth
-    $len = ($Line -replace "`r","").Length
-    if ($len -ge $width -or $width -le 0) {
-        # Too long or unknown width: just write normally
-        if ($NoNewLine) { [Console]::Write($Line) } else { [Console]::WriteLine($Line) }
-        return
+    if (-not $SkipWindowTweaks) {
+        Set-ConsoleFontSize -Size 10
+    }
+}
+if (-not $usingCustomHost) {
+    # Center all console text output helpers (place this at $PLACEHOLDER$)
+    function Get-ConsoleWidth {
+        try { return $Host.UI.RawUI.WindowSize.Width } catch { return 120 }
     }
 
-    $pad = [int]([Math]::Floor(($width - $len) / 2))
-    $spaces = ' ' * $pad
+    function Center-WriteLine {
+        param(
+            [string]$Line,
+            $ForegroundColor = [ConsoleColor]::White,
+            $BackgroundColor = [ConsoleColor]::Black,
+            [switch]$NoNewLine
+        )
 
-    $oldFg = [Console]::ForegroundColor
-    $oldBg = [Console]::BackgroundColor
-    try {
-        $fgColor = Convert-ToConsoleColor $ForegroundColor $oldFg
-        $bgColor = Convert-ToConsoleColor $BackgroundColor $oldBg
-        [Console]::ForegroundColor = $fgColor
-        [Console]::BackgroundColor = $bgColor
-    } catch {}
-    if ($NoNewLine) { [Console]::Write($spaces + $Line) } else { [Console]::WriteLine($spaces + $Line) }
-    try {
-        [Console]::ForegroundColor = $oldFg
-        [Console]::BackgroundColor = $oldBg
-    } catch {}
-}
+        function Convert-ToConsoleColor($val, $default) {
+            if ($val -is [System.ConsoleColor]) { return $val }
+            $s = [string]$val
+            if ($s -match '::') { $s = $s.Split('::')[-1] }
+            $s = $s.Trim('[',']','"',"'",' ')
+            try {
+                return [System.Enum]::Parse([System.ConsoleColor], $s)
+            } catch {
+                return $default
+            }
+        }
 
-# Override Write-Host to center text (supports -ForegroundColor, -BackgroundColor and -NoNewline)
-function Write-Host {
-    [CmdletBinding(DefaultParameterSetName='Default')]
-    param(
-        [Parameter(ValueFromPipeline=$true, Position=0, ValueFromRemainingArguments=$true)]
-        $Object,
-        [ConsoleColor]$ForegroundColor = [ConsoleColor]::White,
-        [ConsoleColor]$BackgroundColor = [ConsoleColor]::Black,
-        [switch]$NoNewline
-    )
-    process {
-        $text = if ($Object -is [System.Array]) { ($Object -join ' ') } else { [string]$Object }
-        # preserve multiple lines
-        $text -split "`n" | ForEach-Object {
-            Center-WriteLine -Line ($_ -replace "`r","") -ForegroundColor $ForegroundColor -BackgroundColor $BackgroundColor -NoNewLine:$NoNewline
+        if ($null -eq $Line) { $Line = '' }
+        $width = Get-ConsoleWidth
+        $len = ($Line -replace "`r","").Length
+        $fgColor = Convert-ToConsoleColor $ForegroundColor ([ConsoleColor]::White)
+        $bgColor = Convert-ToConsoleColor $BackgroundColor ([ConsoleColor]::Black)
+        if ($len -ge $width -or $width -le 0) {
+            # Too long or unknown width: just write normally
+            if ($NoNewLine) {
+                $Host.UI.Write($fgColor, $bgColor, $Line)
+            }
+            else {
+                $Host.UI.WriteLine($fgColor, $bgColor, $Line)
+            }
+            return
+        }
+
+        $pad = [int]([Math]::Floor(($width - $len) / 2))
+        $spaces = ' ' * $pad
+        if ($NoNewLine) {
+            $Host.UI.Write($fgColor, $bgColor, $spaces + $Line)
+        }
+        else {
+            $Host.UI.WriteLine($fgColor, $bgColor, $spaces + $Line)
+        }
+    }
+
+    # Override Write-Host to center text (supports -ForegroundColor, -BackgroundColor and -NoNewline)
+    function Write-Host {
+        [CmdletBinding(DefaultParameterSetName='Default')]
+        param(
+            [Parameter(ValueFromPipeline=$true, Position=0, ValueFromRemainingArguments=$true)]
+            $Object,
+            [ConsoleColor]$ForegroundColor = [ConsoleColor]::White,
+            [ConsoleColor]$BackgroundColor = [ConsoleColor]::Black,
+            [switch]$NoNewline
+        )
+        process {
+            $text = if ($Object -is [System.Array]) { ($Object -join ' ') } else { [string]$Object }
+            # preserve multiple lines
+            $text -split "`n" | ForEach-Object {
+                Center-WriteLine -Line ($_ -replace "`r","") -ForegroundColor $ForegroundColor -BackgroundColor $BackgroundColor -NoNewLine:$NoNewline
+            }
+        }
+    }
+
+    # Override Write-Output to center text (most uses in this script are user-facing)
+    function Write-Output {
+        [CmdletBinding()]
+        param(
+            [Parameter(ValueFromPipeline=$true, Position=0)]
+            $InputObject
+        )
+        process {
+            $text = [string]$InputObject
+            $text -split "`n" | ForEach-Object {
+                Center-WriteLine -Line ($_ -replace "`r","") -ForegroundColor [ConsoleColor]::White -BackgroundColor [ConsoleColor]::Black
+            }
         }
     }
 }
-
-# Override Write-Output to center text (most uses in this script are user-facing)
-function Write-Output {
-    [CmdletBinding()]
-    param(
-        [Parameter(ValueFromPipeline=$true, Position=0)]
-        $InputObject
-    )
-    process {
-        $text = [string]$InputObject
-        $text -split "`n" | ForEach-Object {
-            Center-WriteLine -Line ($_ -replace "`r","") -ForegroundColor [ConsoleColor]::White -BackgroundColor [ConsoleColor]::Black
+else {
+    # In GUI mode, route Write-Host to standard output so the wrapper can capture it.
+    function Write-Host {
+        [CmdletBinding(DefaultParameterSetName='Default')]
+        param(
+            [Parameter(ValueFromPipeline=$true, Position=0, ValueFromRemainingArguments=$true)]
+            $Object,
+            [ConsoleColor]$ForegroundColor = [ConsoleColor]::White,
+            [ConsoleColor]$BackgroundColor = [ConsoleColor]::Black,
+            [switch]$NoNewline
+        )
+        process {
+            $text = if ($Object -is [System.Array]) { ($Object -join ' ') } else { [string]$Object }
+            $text -split "`n" | ForEach-Object {
+                $line = ($_ -replace "`r","")
+                Microsoft.PowerShell.Utility\Write-Output ("TMS_COLOR|{0}|{1}" -f $ForegroundColor, $line)
+            }
         }
+    }
+    function Clear-Host {
+        Microsoft.PowerShell.Utility\Write-Output "TMS_CLEAR"
     }
 }
 try {
-    [Console]::BackgroundColor = 'Black'
-    [Console]::ForegroundColor = 'White'
-    if ($Host -and $Host.UI -and $Host.UI.RawUI) {
-        $raw = $Host.UI.RawUI
-        $raw.BackgroundColor = 'Black'
-        $raw.ForegroundColor = 'White'
+    if (-not $usingCustomHost) {
+        [Console]::BackgroundColor = 'Black'
+        [Console]::ForegroundColor = 'White'
+        if ($Host -and $Host.UI -and $Host.UI.RawUI) {
+            $raw = $Host.UI.RawUI
+            $raw.BackgroundColor = 'Black'
+            $raw.ForegroundColor = 'White'
+        }
+        try { [Console]::CursorVisible = $false } catch {}
     }
-    try { [Console]::CursorVisible = $false } catch {}
     Clear-Host
 }
 catch {
     # Host may not support color changes; ignore
 }
 
-# Attempt to remove scroll bars by making the buffer exactly the window size (best-effort)
-try {
-    if ($Host -and $Host.UI -and $Host.UI.RawUI) {
+if (-not $SkipWindowTweaks -and -not $usingCustomHost) {
+    # Attempt to remove scroll bars by making the buffer exactly the window size (best-effort)
+    try {
+        if ($Host -and $Host.UI -and $Host.UI.RawUI) {
+            $raw = $Host.UI.RawUI
+            $win = $raw.WindowSize
+            $raw.BufferSize = New-Object System.Management.Automation.Host.Size ($win.Width, $win.Height)
+            $raw.WindowPosition = New-Object System.Management.Automation.Host.Coordinates (0,0)
+        }
+    }
+    catch {
+        # Host may not support buffer/window changes; ignore
+    }
+    # Attempt to resize the console to fit the banner nicely (best-effort, clamped to host limits)
+    try {
         $raw = $Host.UI.RawUI
-        $win = $raw.WindowSize
-        $raw.BufferSize = New-Object System.Management.Automation.Host.Size ($win.Width, $win.Height)
-        $raw.WindowPosition = New-Object System.Management.Automation.Host.Coordinates (0,0)
+        $desiredWidth = 120
+        $desiredHeight = 40
+
+        $maxWidth = $raw.MaxPhysicalWindowSize.Width
+        $maxHeight = $raw.MaxPhysicalWindowSize.Height
+
+        $newWidth = [Math]::Min($desiredWidth, $maxWidth)
+        $newHeight = [Math]::Min($desiredHeight, $maxHeight)
+
+        # Set buffer to exactly the window size to avoid vertical scrolling
+        $raw.BufferSize = New-Object System.Management.Automation.Host.Size ($newWidth, $newHeight)
+        $raw.WindowSize = New-Object System.Management.Automation.Host.Size ($newWidth, $newHeight)
+
+        # Ensure window shows from the top-left and cursor is at the top-left
+        $raw.WindowPosition = New-Object System.Management.Automation.Host.Coordinates (0, 0)
+        $raw.CursorPosition = New-Object System.Management.Automation.Host.Coordinates (0, 0)
+
+        # Clear to ensure the buffer/window start at the top
+        Clear-Host
     }
-}
-catch {
-    # Host may not support buffer/window changes; ignore
-}
-# Attempt to resize the console to fit the banner nicely (best-effort, clamped to host limits)
-try {
-    $raw = $Host.UI.RawUI
-    $desiredWidth = 120
-    $desiredHeight = 40
-
-    $maxWidth = $raw.MaxPhysicalWindowSize.Width
-    $maxHeight = $raw.MaxPhysicalWindowSize.Height
-
-    $newWidth = [Math]::Min($desiredWidth, $maxWidth)
-    $newHeight = [Math]::Min($desiredHeight, $maxHeight)
-
-    # Set buffer to exactly the window size to avoid vertical scrolling
-    $raw.BufferSize = New-Object System.Management.Automation.Host.Size ($newWidth, $newHeight)
-    $raw.WindowSize = New-Object System.Management.Automation.Host.Size ($newWidth, $newHeight)
-
-    # Ensure window shows from the top-left and cursor is at the top-left
-    $raw.WindowPosition = New-Object System.Management.Automation.Host.Coordinates (0, 0)
-    $raw.CursorPosition = New-Object System.Management.Automation.Host.Coordinates (0, 0)
-
-    # Clear to ensure the buffer/window start at the top
-    Clear-Host
-}
-catch {
-    # If resizing/positioning fails (remote session, restricted host, etc.), continue without stopping the script
-}
-try {
-    # Fallbacks for hosts that ignore RawUI sizing (e.g., Windows Terminal)
-    mode con: cols=$desiredWidth lines=$desiredHeight | Out-Null
-    if ($env:WT_SESSION) {
-        # Request terminal resize via ANSI escape sequence (rows;cols)
-        [Console]::Write("`e[8;{0};{1}t" -f $desiredHeight, $desiredWidth)
+    catch {
+        # If resizing/positioning fails (remote session, restricted host, etc.), continue without stopping the script
     }
-}
-catch {
-    # Ignore if host does not support resizing
-}
-try {
-    if (-not ("Win32.ConsoleWindow" -as [type])) {
-        Add-Type -Namespace Win32 -Name ConsoleWindow -MemberDefinition @'
+    try {
+        # Fallbacks for hosts that ignore RawUI sizing (e.g., Windows Terminal)
+        mode con: cols=$desiredWidth lines=$desiredHeight | Out-Null
+        if ($env:WT_SESSION) {
+            # Request terminal resize via ANSI escape sequence (rows;cols)
+            [Console]::Write("`e[8;{0};{1}t" -f $desiredHeight, $desiredWidth)
+        }
+    }
+    catch {
+        # Ignore if host does not support resizing
+    }
+    try {
+        if (-not ("Win32.ConsoleWindow" -as [type])) {
+            Add-Type -Namespace Win32 -Name ConsoleWindow -MemberDefinition @'
 [DllImport("kernel32.dll", SetLastError=true)]
 public static extern IntPtr GetConsoleWindow();
 [DllImport("user32.dll", SetLastError=true)]
@@ -269,53 +330,56 @@ public struct RECT {
     public int Bottom;
 }
 '@
-    }
+        }
 
-    Add-Type -AssemblyName System.Windows.Forms
+        Add-Type -AssemblyName System.Windows.Forms
 
-    $hWnd = [Win32.ConsoleWindow]::GetConsoleWindow()
-    if ($hWnd -ne [IntPtr]::Zero) {
-        $screenW = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Width
-        $screenH = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Height
+        $hWnd = [Win32.ConsoleWindow]::GetConsoleWindow()
+        if ($hWnd -ne [IntPtr]::Zero) {
+            $screenW = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Width
+            $screenH = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Height
 
-        $SWP_NOSIZE = 0x0001
-        $SWP_NOZORDER = 0x0004
-        $rect = New-Object Win32.ConsoleWindow+RECT
+            $SWP_NOSIZE = 0x0001
+            $SWP_NOZORDER = 0x0004
+            $rect = New-Object Win32.ConsoleWindow+RECT
 
-        # Retry a few quick times so centering happens as soon as the window size is valid
-        for ($i = 0; $i -lt 5; $i++) {
-            if ([Win32.ConsoleWindow]::GetWindowRect($hWnd, [ref]$rect)) {
-                $winWidth = $rect.Right - $rect.Left
-                $winHeight = $rect.Bottom - $rect.Top
-                if ($winWidth -gt 0 -and $winHeight -gt 0) {
-                    $newX = [Math]::Max(0, [int](($screenW - $winWidth) / 2))
-                    $newY = [Math]::Max(0, [int](($screenH - $winHeight) / 2))
-                    [void][Win32.ConsoleWindow]::SetWindowPos($hWnd, [IntPtr]::Zero, $newX, $newY, 0, 0, $SWP_NOSIZE -bor $SWP_NOZORDER)
-                    break
+            # Retry a few quick times so centering happens as soon as the window size is valid
+            for ($i = 0; $i -lt 5; $i++) {
+                if ([Win32.ConsoleWindow]::GetWindowRect($hWnd, [ref]$rect)) {
+                    $winWidth = $rect.Right - $rect.Left
+                    $winHeight = $rect.Bottom - $rect.Top
+                    if ($winWidth -gt 0 -and $winHeight -gt 0) {
+                        $newX = [Math]::Max(0, [int](($screenW - $winWidth) / 2))
+                        $newY = [Math]::Max(0, [int](($screenH - $winHeight) / 2))
+                        [void][Win32.ConsoleWindow]::SetWindowPos($hWnd, [IntPtr]::Zero, $newX, $newY, 0, 0, $SWP_NOSIZE -bor $SWP_NOZORDER)
+                        break
+                    }
                 }
+                Start-Sleep -Milliseconds 10
             }
-            Start-Sleep -Milliseconds 10
         }
     }
-}
-catch {
-    # Ignore if host does not support moving the window
+    catch {
+        # Ignore if host does not support moving the window
+    }
 }
 
 $banner = @'
  ( ___ )                                                                                                      ( ___ )
-  |   |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|   | 
-  |   |                    *                                     (                                             |   | 
-  |   |   *   )   )      (  `                           (       ))\ )                                       )  |   | 
-  |   | ` )  /(( /(   (  )\))(  (          (    (      ))\ ) ( /(()/(   (  (    )     (  (            (  ( /(  |   | 
-  |   |  ( )(_))\()) ))\((_)()\ )\  (     ))\ ( )(  ( /(()/( )\())(_)) ))\ )(  /((   ))\ )(    (     ))\ )\()) |   | 
-  |   | (_(_()|(_)\ /((_|_()((_|(_) )\ ) /((_))(()\ )(_))(_)|_))(_))  /((_|()\(_))\ /((_|()\   )\ ) /((_|_))/  |   | 
-  |   | |_   _| |(_|_)) |  \/  |(_)_(_/((_)) ((_|(_|(_)(_) _| |_/ __|(_))  ((_))((_|_))  ((_) _(_/((_)) | |_   |   | 
-  |   |   | | | ' \/ -_)| |\/| || | ' \)) -_) _| '_/ _` |  _|  _\__ \/ -_)| '_\ V // -_)| '_|| ' \)) -_)|  _|  |   | 
-  |   |   |_| |_||_\___||_|  |_||_|_||_|\___\__|_| \__,_|_|  \__|___/\___||_|  \_/ \___||_|(_)_||_|\___| \__|  |   | 
-  |___|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|___| 
+ |   |~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|   | 
+ |   |                    *                                     (                                             |   | 
+ |   |   *   )   )      (  `                           (       ))\ )                                       )  |   | 
+ |   | ` )  /(( /(   (  )\))(  (          (    (      ))\ ) ( /(()/(   (  (    )     (  (            (  ( /(  |   | 
+ |   |  ( )(_))\()) ))\((_)()\ )\  (     ))\ ( )(  ( /(()/( )\())(_)) ))\ )(  /((   ))\ )(    (     ))\ )\()) |   | 
+ |   | (_(_()|(_)\ /((_|_()((_|(_) )\ ) /((_))(()\ )(_))(_)|_))(_))  /((_|()\(_))\ /((_|()\   )\ ) /((_|_))/  |   | 
+ |   | |_   _| |(_|_)) |  \/  |(_)_(_/((_)) ((_|(_|(_)(_) _| |_/ __|(_))  ((_))((_|_))  ((_) _(_/((_)) | |_   |   | 
+ |   |   | | | ' \/ -_)| |\/| || | ' \)) -_) _| '_/ _` |  _|  _\__ \/ -_)| '_\ V // -_)| '_|| ' \)) -_)|  _|  |   | 
+ |   |   |_| |_||_\___||_|  |_||_|_||_|\___\__|_| \__,_|_|  \__|___/\___||_|  \_/ \___||_|(_)_||_|\___| \__|  |   | 
+ |___|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|___| 
  (_____)                                                                                                      (_____)
 '@
+$bannerLines = $banner -split "`r?`n"
+$banner = ($bannerLines | ForEach-Object { $_.TrimEnd() }) -join "`n"
 
 $welcomeMessage = @'
 //////////////////////////////////////////////
@@ -338,7 +402,7 @@ $infoMessage = @'
 ////////////////////////////////////////////////////
 '@
 
-$continueMessage = 'Press Enter to continue or Ctrl+C to cancel'
+$continueMessage = 'Press Enter to continue'
 
 # Clear the console window before showing the installer and message
 Clear-Host
