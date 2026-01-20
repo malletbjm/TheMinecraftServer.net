@@ -15,6 +15,7 @@ namespace Launcher
         private const int DefaultColumns = 117;
         private const int DefaultRows = 36;
         private const string ColorPrefix = "TMS_COLOR|";
+        private const string StatusPrefix = "TMS_STATUS|";
         private const string ClearMarker = "TMS_CLEAR";
 
         [STAThread]
@@ -178,6 +179,12 @@ namespace Launcher
                         lineColor = parsedColor;
                     }
 
+                    if (TryParseStatusLine(localLine, out var statusLine, out var statusColor))
+                    {
+                        form.SetStatusLine(statusLine, statusColor, System.Drawing.Color.Black, true);
+                        continue;
+                    }
+
                     form.AppendLine(outputLine, lineColor, System.Drawing.Color.Black, true);
                     if (detectPrompt && outputLine.IndexOf("Press Enter", StringComparison.OrdinalIgnoreCase) >= 0)
                     {
@@ -212,14 +219,14 @@ namespace Launcher
                     Directory.CreateDirectory(dir);
                 }
 
-                using Stream? input = asm.GetManifestResourceStream(name);
-                if (input == null)
+                using Stream? resourceStream = asm.GetManifestResourceStream(name);
+                if (resourceStream == null)
                 {
                     continue;
                 }
 
                 using FileStream output = File.Open(filePath, FileMode.Create, FileAccess.Write, FileShare.Read);
-                input.CopyTo(output);
+                resourceStream.CopyTo(output);
             }
         }
 
@@ -305,6 +312,28 @@ namespace Launcher
             }
 
             string payload = line.Substring(ColorPrefix.Length);
+            string[] parts = payload.Split('|', 2);
+            if (parts.Length != 2)
+            {
+                return false;
+            }
+
+            text = parts[1];
+            color = MapConsoleColor(parts[0], System.Drawing.Color.White);
+            return true;
+        }
+
+        private static bool TryParseStatusLine(string line, out string text, out System.Drawing.Color color)
+        {
+            text = line;
+            color = System.Drawing.Color.White;
+
+            if (string.IsNullOrEmpty(line) || !line.StartsWith(StatusPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            string payload = line.Substring(StatusPrefix.Length);
             string[] parts = payload.Split('|', 2);
             if (parts.Length != 2)
             {

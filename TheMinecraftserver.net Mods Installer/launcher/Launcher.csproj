@@ -20,9 +20,6 @@
     <EmbeddedResource Include="..\\bin\\server-icon.ico">
       <LogicalName>assets/bin/server-icon.ico</LogicalName>
     </EmbeddedResource>
-    <EmbeddedResource Include="..\\bin\\mods\\**\\*">
-      <LogicalName>assets/bin/mods/%(RecursiveDir)%(Filename)%(Extension)</LogicalName>
-    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>

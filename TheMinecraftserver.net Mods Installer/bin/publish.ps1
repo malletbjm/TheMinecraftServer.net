@@ -17,6 +17,11 @@ try {
         /p:PublishSingleFile=true `
         /p:IncludeNativeLibrariesForSelfExtract=true `
         /p:EnableCompressionInSingleFile=true `
+        /p:InvariantGlobalization=true `
+        /p:PublishReadyToRun=false `
+        /p:DebugType=none `
+        /p:DebugSymbols=false `
+        /p:IncludeSymbolsInSingleFile=false `
         /p:NuGetAudit=false
 }
 finally {

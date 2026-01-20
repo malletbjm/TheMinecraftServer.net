@@ -13,6 +13,8 @@ namespace Launcher
         private bool _awaitingContinue;
         private bool _allowClose = true;
         private Action? _closeHandler;
+        private int _statusStart = -1;
+        private int _statusLength = 0;
         private const float MinFontSize = 6f;
 
         public int Columns { get; private set; }
@@ -151,6 +153,36 @@ namespace Launcher
             }
 
             _output.Clear();
+            _statusStart = -1;
+            _statusLength = 0;
+        }
+
+        public void SetStatusLine(string line, Color foreground, Color background, bool center)
+        {
+            if (InvokeRequired)
+            {
+                BeginInvoke(new Action(() => SetStatusLine(line, foreground, background, center)));
+                return;
+            }
+
+            int end = _output.TextLength;
+            if (_statusStart < 0 || _statusStart + _statusLength < end)
+            {
+                _statusStart = end;
+                _statusLength = 0;
+            }
+
+            _output.SelectionStart = _statusStart;
+            _output.SelectionLength = _statusLength;
+            _output.SelectionColor = foreground;
+            _output.SelectionBackColor = background;
+            _output.SelectionAlignment = center ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+            _output.SelectedText = (line ?? string.Empty) + Environment.NewLine;
+            _statusLength = (line ?? string.Empty).Length + Environment.NewLine.Length;
+            _output.SelectionColor = _output.ForeColor;
+            _output.SelectionBackColor = _output.BackColor;
+            _output.ScrollToCaret();
+            HideCaretSafe(_output);
         }
 
         public void SetWindowTitle(string title)

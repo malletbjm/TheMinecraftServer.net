@@ -21,6 +21,316 @@ if (-not $usingCustomHost -and -not $ForceConsole) {
 $modsSource = Join-Path $scriptRoot "mods"
 $modsDestination = "$minecraftDirectory\mods"
 $debug = $false
+$modsReleaseUrl = $env:TMS_MODS_URL
+$modsReleaseSha256 = $env:TMS_MODS_SHA256
+$modsReleaseTag = $env:TMS_MODS_TAG
+$modsReleaseRepo = $env:TMS_MODS_REPO
+if ([string]::IsNullOrWhiteSpace($modsReleaseRepo)) {
+    $modsReleaseRepo = "malletbjm/TheMinecraftServer.net"
+}
+$modsAssetFilter = $env:TMS_MODS_FILTER
+$modsAssetExtensions = $env:TMS_MODS_EXTENSIONS
+if ([string]::IsNullOrWhiteSpace($modsAssetExtensions)) {
+    $modsAssetExtensions = ".jar"
+}
+
+$script:modsIndicatorEnabled = $false
+$script:modsIndicatorTick = 0
+$script:modsIndicatorTotal = 0
+
+function Write-StatusLine {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Text
+    )
+
+    if ($usingCustomHost) {
+        Microsoft.PowerShell.Utility\Write-Output ("TMS_STATUS|White|{0}" -f $Text)
+    }
+    else {
+        Write-Host $Text
+    }
+}
+
+function Start-ModsDownloadIndicator {
+    param(
+        [int]$Total
+    )
+
+    $script:modsIndicatorTick = 0
+    $script:modsIndicatorTotal = [Math]::Max(0, $Total)
+    $script:modsIndicatorEnabled = $true
+
+    if ($usingCustomHost) {
+        Write-StatusLine "Downloading Mods"
+        return
+    }
+
+    try {
+        [Console]::Write("Downloading Mods")
+    }
+    catch {
+        Write-Output "Downloading Mods"
+        $script:modsIndicatorEnabled = $false
+    }
+}
+
+function Update-ModsDownloadIndicator {
+    param(
+        [int]$Current,
+        [string]$Name
+    )
+
+    if (-not $script:modsIndicatorEnabled) {
+        return
+    }
+
+    if ($usingCustomHost) {
+        $status = "Downloading Mods"
+        if ($script:modsIndicatorTotal -gt 0) {
+            $status = "Downloading Mods ($Current/$script:modsIndicatorTotal)"
+        }
+        if (-not [string]::IsNullOrWhiteSpace($Name)) {
+            $status = "${status}: $Name"
+        }
+        Write-StatusLine $status
+        return
+    }
+
+    $spinner = @('|', '/', '-', '\')
+    $char = $spinner[$script:modsIndicatorTick % $spinner.Count]
+    $script:modsIndicatorTick++
+    $progress = ""
+    if ($script:modsIndicatorTotal -gt 0) {
+        $progress = " ($Current/$script:modsIndicatorTotal)"
+    }
+    $namePart = ""
+    if (-not [string]::IsNullOrWhiteSpace($Name)) {
+        $namePart = " $Name"
+    }
+
+    try {
+        [Console]::Write("`rDownloading Mods$progress$namePart $char")
+    }
+    catch {
+        $script:modsIndicatorEnabled = $false
+    }
+}
+
+function Stop-ModsDownloadIndicator {
+    if (-not $script:modsIndicatorEnabled) {
+        return
+    }
+
+    if (-not $usingCustomHost) {
+        try {
+            [Console]::WriteLine()
+        }
+        catch {
+        }
+    }
+
+    $script:modsIndicatorEnabled = $false
+    Write-StatusLine "Mods downloaded successfully"
+}
+
+function Get-ModsArchive {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Url,
+        [Parameter(Mandatory=$true)]
+        [string]$DestinationPath,
+        [string]$ExpectedSha256
+    )
+
+    $destinationDir = Split-Path -Parent $DestinationPath
+    if (-not (Test-Path -LiteralPath $destinationDir)) {
+        New-Item -ItemType Directory -Path $destinationDir | Out-Null
+    }
+
+    if (Test-Path -LiteralPath $DestinationPath) {
+        if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) {
+            return
+        }
+
+        $existingHash = (Get-FileHash -LiteralPath $DestinationPath -Algorithm SHA256).Hash
+        if ($existingHash -eq $ExpectedSha256.ToUpperInvariant()) {
+            return
+        }
+
+        Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue
+    }
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    }
+    catch {
+    }
+
+    Start-ModsDownloadIndicator -Total 1
+    try {
+        Update-ModsDownloadIndicator -Current 1 -Name "mods archive"
+        $invokeParams = @{
+            Uri = $Url
+            OutFile = $DestinationPath
+        }
+        if ($PSVersionTable.PSVersion.Major -lt 6) {
+            $invokeParams.UseBasicParsing = $true
+        }
+        Invoke-WebRequest @invokeParams
+    }
+    finally {
+        Stop-ModsDownloadIndicator
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedSha256)) {
+        $actualHash = (Get-FileHash -LiteralPath $DestinationPath -Algorithm SHA256).Hash
+        if ($actualHash -ne $ExpectedSha256.ToUpperInvariant()) {
+            Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue
+            throw "Mods archive checksum mismatch."
+        }
+    }
+}
+
+function Ensure-ModsSource {
+    if (Test-Path -LiteralPath $modsSource) {
+        Remove-Item -LiteralPath $modsSource -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    New-Item -ItemType Directory -Path $modsSource | Out-Null
+
+    if (-not [string]::IsNullOrWhiteSpace($modsReleaseUrl)) {
+        $cacheRoot = Join-Path $env:TEMP "TheMinecraftServer.net Mods Installer"
+        $archivePath = Join-Path $cacheRoot ("mods-" + $minecraftVersion + ".zip")
+        if (Test-Path -LiteralPath $archivePath) {
+            Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+        }
+        try {
+            Get-ModsArchive -Url $modsReleaseUrl -DestinationPath $archivePath -ExpectedSha256 $modsReleaseSha256
+            Expand-Archive -LiteralPath $archivePath -DestinationPath $modsSource -Force
+
+            $nestedMods = Join-Path $modsSource "mods"
+            $modsFiles = Get-ChildItem -LiteralPath $modsSource -File -Recurse -ErrorAction SilentlyContinue
+            if ((Test-Path -LiteralPath $nestedMods) -and $modsFiles.Count -eq 0) {
+                Copy-Item -LiteralPath (Join-Path $nestedMods "*") -Destination $modsSource -Recurse -Force
+                Remove-Item -LiteralPath $nestedMods -Recurse -Force
+            }
+        }
+        finally {
+            if (Test-Path -LiteralPath $archivePath) {
+                Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+            }
+            if (Test-Path -LiteralPath $cacheRoot) {
+                $leftovers = Get-ChildItem -LiteralPath $cacheRoot -Force -ErrorAction SilentlyContinue
+                if (-not $leftovers) {
+                    Remove-Item -LiteralPath $cacheRoot -Force -ErrorAction SilentlyContinue
+                }
+            }
+        }
+
+        return
+    }
+
+    $extensions = $modsAssetExtensions.Split(';') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    }
+    catch {
+    }
+
+    $headers = @{ "User-Agent" = "TMS-Mods-Installer" }
+    if (-not [string]::IsNullOrWhiteSpace($modsReleaseTag)) {
+        $releaseApi = "https://api.github.com/repos/$modsReleaseRepo/releases/tags/$modsReleaseTag"
+        $release = Invoke-RestMethod -Uri $releaseApi -Headers $headers -Method Get
+        if (-not $release -or -not $release.assets) {
+            throw "No assets found for release tag '$modsReleaseTag'."
+        }
+        $assets = @($release.assets)
+    }
+    else {
+        $releasesApi = "https://api.github.com/repos/$modsReleaseRepo/releases?per_page=100"
+        $releases = Invoke-RestMethod -Uri $releasesApi -Headers $headers -Method Get
+        if (-not $releases) {
+            throw "No releases found for $modsReleaseRepo."
+        }
+
+        $matchingReleases = $releases | Where-Object {
+            -not $_.draft -and $_.name -and $_.name -like "*$minecraftVersion*"
+        }
+        if (-not $matchingReleases -or $matchingReleases.Count -eq 0) {
+            throw "No published release found with name containing '$minecraftVersion'."
+        }
+
+        $selectedRelease = $matchingReleases | Sort-Object { $_.published_at } -Descending | Select-Object -First 1
+        if (-not $selectedRelease.assets) {
+            throw "No assets found for release '$($selectedRelease.name)'."
+        }
+        $assets = @($selectedRelease.assets)
+    }
+    $filteredAssets = $assets
+    if (-not [string]::IsNullOrWhiteSpace($modsAssetFilter)) {
+        $filteredAssets = $assets | Where-Object { $_.name -like "*$modsAssetFilter*" }
+        if (-not $filteredAssets -or $filteredAssets.Count -eq 0) {
+            $filteredAssets = $assets
+        }
+    }
+
+    $filteredAssets = $filteredAssets | Where-Object {
+        $name = $_.name
+        foreach ($ext in $extensions) {
+            if ($name.EndsWith($ext, [StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        }
+        return $false
+    }
+
+    if (-not $filteredAssets -or $filteredAssets.Count -eq 0) {
+        throw "No matching mods assets found in release '$modsReleaseTag'."
+    }
+
+    $downloads = @()
+    foreach ($asset in $filteredAssets) {
+        $downloadUrl = $asset.browser_download_url
+        if ([string]::IsNullOrWhiteSpace($downloadUrl)) {
+            continue
+        }
+
+        $destinationPath = Join-Path $modsSource $asset.name
+        if (Test-Path -LiteralPath $destinationPath) {
+            Remove-Item -LiteralPath $destinationPath -Force -ErrorAction SilentlyContinue
+        }
+
+        $downloads += [pscustomobject]@{
+            Url = $downloadUrl
+            Path = $destinationPath
+            Name = $asset.name
+        }
+    }
+
+    if (-not $downloads -or $downloads.Count -eq 0) {
+        return
+    }
+
+    Start-ModsDownloadIndicator -Total $downloads.Count
+    try {
+        for ($i = 0; $i -lt $downloads.Count; $i++) {
+            $item = $downloads[$i]
+            Update-ModsDownloadIndicator -Current ($i + 1) -Name $item.Name
+            $invokeParams = @{
+                Uri = $item.Url
+                OutFile = $item.Path
+            }
+            if ($PSVersionTable.PSVersion.Major -lt 6) {
+                $invokeParams.UseBasicParsing = $true
+            }
+            Invoke-WebRequest @invokeParams
+        }
+    }
+    finally {
+        Stop-ModsDownloadIndicator
+    }
+}
 if (-not $usingCustomHost) {
     try {
         [Console]::BackgroundColor = 'Black'
@@ -380,6 +690,7 @@ $banner = @'
 '@
 $bannerLines = $banner -split "`r?`n"
 $banner = ($bannerLines | ForEach-Object { $_.TrimEnd() }) -join "`n"
+$script:bannerText = $banner
 
 $welcomeMessage = @'
 //////////////////////////////////////////////
@@ -439,6 +750,25 @@ if (-not (Test-Path -Path $minecraftDirectory)) {
     exit
 }
 
+#Ensure mods are present (download from GitHub Releases if missing)
+try {
+    Ensure-ModsSource
+}
+catch {
+    Write-Output "Error: Failed to prepare mods. $($_.Exception.Message)"
+    Write-Host 'Press Enter to exit'
+    [void](Read-Host)
+    exit
+}
+
+$modsFiles = Get-ChildItem -LiteralPath $modsSource -File -Recurse -ErrorAction SilentlyContinue
+if (-not $modsFiles -or $modsFiles.Count -eq 0) {
+    Write-Output "Mods source is empty: $modsSource, cancelling installation."
+    Write-Host 'Press Enter to exit'
+    [void](Read-Host)
+    exit
+}
+
 #Run Fabric Installer
 try {
     $jarPath = Join-Path $scriptRoot "Fabric Installer.jar"
@@ -460,13 +790,6 @@ catch {
     [void](Read-Host)
     exit
 }
-
-#Check if mods source folder exists
-if (-not (Test-Path -Path $modsSource)) {
-    Write-Output "Mods source not found: $modsSource, cancelling installation."
-    exit
-}
-
 #Create mods folder in .Minecraft folder if it doesn't exist
 if (-Not (Test-Path -Path $modsDestination)) {
     New-Item -ItemType Directory -Path $modsDestination | Out-Null
@@ -535,10 +858,13 @@ catch {
 
 try {
     Copy-Item -Path (Join-Path $modsSource '*') -Destination $modsDestination -Recurse -Force -ErrorAction Stop
-    Write-Output "Mods copied successfully."
+    Write-Output "Mods installed successfully."
+    if (Test-Path -LiteralPath $modsSource) {
+        Remove-Item -LiteralPath $modsSource -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 catch {
-    Write-Output "Error copying mods: $($_.Exception.Message)"
+    Write-Output "Error installing mods: $($_.Exception.Message)"
     Write-Host 'Press Enter to exit'
     [void](Read-Host)
     exit
