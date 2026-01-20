@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace Launcher
@@ -93,6 +94,12 @@ namespace Launcher
 
             _caretTimer.Stop();
             base.OnFormClosing(e);
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            TrySetDarkTitleBar();
         }
 
         public void AppendText(string text, Color foreground, Color background, bool newLine)
@@ -252,6 +259,22 @@ namespace Launcher
             if (control.IsHandleCreated)
             {
                 HideCaret(control.Handle);
+            }
+        }
+
+        [DllImport("dwmapi.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        private void TrySetDarkTitleBar()
+        {
+            try
+            {
+                int useDark = 1;
+                _ = DwmSetWindowAttribute(Handle, 20, ref useDark, sizeof(int));
+                _ = DwmSetWindowAttribute(Handle, 19, ref useDark, sizeof(int));
+            }
+            catch
+            {
             }
         }
     }
