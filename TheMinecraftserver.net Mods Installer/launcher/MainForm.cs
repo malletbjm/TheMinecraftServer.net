@@ -223,6 +223,7 @@ namespace Launcher
             MinimumSize = Size;
             MaximumSize = Size;
 
+            CenterIfReady();
             HideCaretSafe(_output);
         }
 
@@ -251,6 +252,12 @@ namespace Launcher
             }
 
             return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            CenterToScreen();
         }
 
         private void TriggerContinue()
@@ -291,6 +298,14 @@ namespace Launcher
             if (control.IsHandleCreated)
             {
                 HideCaret(control.Handle);
+            }
+        }
+
+        private void CenterIfReady()
+        {
+            if (IsHandleCreated)
+            {
+                CenterToScreen();
             }
         }
 
